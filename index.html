@@ -150,6 +150,8 @@
 
       const previous = previousSignalSnapshot;
       previousSignalSnapshot = current;
+      // Neutral is a quiet state: update the baseline, but wait for the next emotion cue.
+      if (current.emotion === "Neutral") return;
       const changes = [];
       if (current.emotion !== previous.emotion) {
         changes.push(`Emotion changed from ${previous.emotion} to ${current.emotion}.`);
