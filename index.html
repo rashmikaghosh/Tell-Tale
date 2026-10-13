@@ -105,7 +105,10 @@
     let previousSignalSnapshot = null;
     let geminiRequestQueue = Promise.resolve();
     let conversationSummary = "";
+    let inactivityTimer = null;
+    let inactivityPromptSent = false;
     const MAX_RECENT_HISTORY_MESSAGES = 8;
+    const INACTIVITY_DELAY = 60 * 1000;
     const smoothedBlendshapes = new Map();
     const EMOTION_READ_INTERVAL = 15 * 1000;
     const BLENDSHAPE_SMOOTHING = 0.25;
@@ -384,6 +387,20 @@
       });
     }
 
+    // Send one exact-worded Gemini check-in after a full minute without typing.
+    function resetInactivityTimer() {
+      clearTimeout(inactivityTimer);
+      inactivityPromptSent = false;
+      inactivityTimer = setTimeout(() => {
+        if (inactivityPromptSent) return;
+        inactivityPromptSent = true;
+        sendProactiveCheckIn({
+          prompt: 'AUTOMATIC INACTIVITY CHECK-IN: The user has not typed for one minute. Reply with exactly this sentence and nothing else: "Tell me what you are thinking, I can help you."',
+          emotion: latestEmotion
+        });
+      }, INACTIVITY_DELAY);
+    }
+
     function addMessage(text, role) {
       // Keep the first emotion-based prompt in the conversation as its opening line.
       const bubble = document.createElement("div");
@@ -420,15 +437,19 @@
       event.preventDefault();
       const text = messageInput.value.trim();
       if (!text || sendButton.disabled) return;
+      resetInactivityTimer();
       // Freeze the detected emotion at the instant the user sends this message.
       const emotionAtSend = latestEmotion;
       messageInput.value = "";
       submitMessage(text, emotionAtSend);
     });
     messageInput.addEventListener("keydown", (event) => {
+      resetInactivityTimer();
       if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); chatForm.requestSubmit(); }
     });
+    messageInput.addEventListener("input", resetInactivityTimer);
 
+    resetInactivityTimer();
     // Camera permission and model-loading errors appear in the browser console.
     startFaceTracking().catch((error) => console.error("Face tracking could not start:", error));
   </script>
