@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tell-Tale</title>
+  <style>
+    :root { color-scheme: light; --ink: #4b3529; --cream: #fffaf0; --green: #258e43; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { font-family: Arial, Helvetica, sans-serif; color: var(--ink); }
+    .app { width: 100%; height: 100dvh; display: grid; grid-template-columns: 32.7% 1fr; }
+    /* The dark rail keeps the live camera and its event history together. */
+    .monitor { min-width: 0; overflow: hidden; display: flex; flex-direction: column; background: #050607; color: var(--green); padding: 4.2vh 0 24px; }
+    .camera-frame { position: relative; width: 72%; max-width: 500px; aspect-ratio: 16 / 9; margin: 0 auto; overflow: hidden; border: 4px solid #299747; border-radius: 22px; background: #080a09; }
+    #camera, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    #camera { z-index: 0; } #overlay { z-index: 1; pointer-events: none; }
+    .signal-area { width: 82%; max-width: 570px; margin: 5.1vh auto 0; }
+    .signal-heading { margin-bottom: 8px; color: #83d69a; font-size: clamp(12px, 1vw, 17px); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+    .event-log { display: flex; flex-direction: column; gap: 8px; color: #36964d; font-size: clamp(14px, 1.32vw, 24px); line-height: 1.3; }
+    .event { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .event::before { content: ">"; margin-right: 18px; }
+    .chat { min-width: 0; height: 100%; display: flex; flex-direction: column; background: var(--cream); padding: 7.1vh 6.2% 6.4vh; }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: clamp(23px, 1.7vw, 34px); letter-spacing: -.04em; }
+    .brand svg { width: 58px; height: 40px; flex: none; }
+    .conversation { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; padding: 20px 0 28px; }
+    .welcome { margin: auto 0 0 2.5%; padding-top: 20px; font-weight: 700; font-size: clamp(18px, 1.35vw, 28px); }
+    .welcome[hidden] { display: none; }
+    .message { max-width: min(78%, 760px); padding: 14px 19px; border-radius: 18px; font-size: clamp(15px, 1vw, 19px); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .message.user { align-self: flex-end; background: #efe6d8; }
+    .message.assistant { align-self: flex-start; background: #f5eee2; }
+    .message.status { color: #806f62; font-style: italic; background: transparent; padding-left: 0; }
+    .composer { flex: none; min-height: 58px; display: flex; align-items: center; gap: 12px; padding: 6px 14px; border: 2px solid var(--ink); border-radius: 24px; background: transparent; }
+    .plus { font-size: 26px; line-height: 1; font-weight: 300; color: var(--ink); user-select: none; }
+    .composer textarea { flex: 1; min-width: 0; min-height: 24px; max-height: 120px; resize: none; border: 0; outline: 0; background: transparent; color: var(--ink); font-family: inherit; font-size: clamp(15px, 1vw, 18px); line-height: 1.4; transform: translateY(1px); }
+    .composer textarea::placeholder { color: #a18472; opacity: 1; }
+    .send { width: 46px; height: 46px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--ink); color: white; cursor: pointer; }
+    .send:disabled { opacity: .45; cursor: wait; }
+    .send svg { width: 22px; height: 22px; }
+    @media (max-width: 760px) {
+      .app { grid-template-columns: 1fr; grid-template-rows: minmax(190px, 34dvh) 1fr; }
+      .monitor { padding: 15px 4% 10px; display: grid; grid-template-columns: minmax(0, 48%) minmax(0, 1fr); grid-template-rows: min-content 1fr 1fr; align-items: start; gap: 8px 14px; }
+      .camera-frame { grid-column: 1; grid-row: 1 / span 3; width: 100%; margin: 0; border-radius: 14px; }
+      .signal-area { width: 100%; margin: 3px 0 0; }
+      .signal-heading { margin-bottom: 4px; }
+      .event-log { gap: 4px; font-size: clamp(12px, 2.4vw, 16px); }
+      .event::before { margin-right: 7px; }
+      .chat { padding: 18px 5% 22px; }
+      .brand svg { width: 42px; }
+      .composer { min-height: 54px; border-radius: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="monitor" aria-label="Live face tracking">
+      <div class="camera-frame">
+        <video id="camera" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+      </div>
+      <section class="signal-area" aria-label="Emotion detection">
+        <div class="signal-heading">Emotion</div>
+        <div class="event-log" id="emotion-log" role="log" aria-live="polite" aria-label="Recent emotion detections"></div>
+      </section>
+    </aside>
+
+    <main class="chat">
+      <header class="brand" aria-label="Tell-Tale">
+        <svg viewBox="0 0 64 44" role="img" aria-label="Eye"><path fill="currentColor" d="M2 22C9 9 19 3 32 3s23 6 30 19c-7 13-17 19-30 19S9 35 2 22Z"/><circle cx="32" cy="22" r="12" fill="#fffaf0"/><circle cx="32" cy="22" r="6.5" fill="currentColor"/></svg>
+        <span>tell-tale</span>
+      </header>
+      <section class="conversation" id="conversation" aria-live="polite">
+        <div class="welcome" id="welcome">What is making you happy today?</div>
+      </section>
+      <form class="composer" id="chat-form">
+        <span class="plus" aria-hidden="true">+</span>
+        <textarea id="message-input" rows="1" placeholder="Write a message....." aria-label="Write a message"></textarea>
+        <button class="send" id="send-button" type="submit" aria-label="Send message" title="Send">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+        </button>
+      </form>
+    </main>
+  </div>
+
+  <script type="module">
+    // MediaPipe runs the face tracking locally in your browser.
+    import { FaceLandmarker, FilesetResolver } from
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/vision_bundle.mjs";
+
+    const video = document.querySelector("#camera");
+    const canvas = document.querySelector("#overlay");
+    const emotionLog = document.querySelector("#emotion-log");
+    const drawing = canvas.getContext("2d");
+    const conversation = document.querySelector("#conversation");
+    const welcome = document.querySelector("#welcome");
+    const chatForm = document.querySelector("#chat-form");
+    const messageInput = document.querySelector("#message-input");
+    const sendButton = document.querySelector("#send-button");
+    const chatHistory = [];
+    const emotionEvents = [];
+    let latestEmotion = "Neutral";
+    let firstEmotionRecorded = false;
+    let lastLoggedEmotion = "";
+    let nextEmotionReadAt = 0;
+    let previousSignalSnapshot = null;
+    let geminiRequestQueue = Promise.resolve();
+    let conversationSummary = "";
+    const MAX_RECENT_HISTORY_MESSAGES = 8;
+    const smoothedBlendshapes = new Map();
+    const EMOTION_READ_INTERVAL = 15 * 1000;
+    const BLENDSHAPE_SMOOTHING = 0.25;
+    const BLINK_THRESHOLD = 0.65;
+
+    // These labels are estimated from MediaPipe blendshapes (not DeepFace scores).
+    const EMOTION_BLENDSHAPES = {
+      Surprised: ["browInnerUp", "browOuterUpLeft", "browOuterUpRight", "jawOpen", "mouthFunnel", "mouthPressLeft", "mouthPressRight"],
+      Amused: ["mouthSmileLeft", "mouthSmileRight", "eyeSquintLeft", "eyeSquintRight", "cheekSquintLeft", "cheekSquintRight", "mouthPressLeft", "mouthPressRight"],
+      // Anger approximation: a furrowed brow and narrowed eyes.
+      Angry: ["browDownLeft", "browDownRight", "eyeSquintLeft", "eyeSquintRight"],
+      Frustrated: ["browDownLeft", "browDownRight", "eyeSquintLeft", "eyeSquintRight", "jawOpen", "mouthStretchLeft", "mouthStretchRight", "mouthPressLeft", "mouthPressRight"],
+      // Confusion uses an uneven brow together with sideways mouth movement; eye squint is omitted to reduce neutral false positives.
+      Confused: [{ maxPairSum: [["browDownLeft", "browOuterUpRight"], ["browDownRight", "browOuterUpLeft"]] }, { maxOf: ["mouthLeft", "mouthRight"] }, "mouthPressLeft", "mouthPressRight"]
+    };
+    const DETECTION_THRESHOLD = 0.75;
+    const EMOTION_THRESHOLDS = { Angry: 0.75, Frustrated: 0.25, Confused: 0.35 };
+    // Sad uses downturned mouth corners or pressed lips; this direct cutoff prioritizes that signal.
+    const SAD_MOUTH_SUM_THRESHOLD = 0.10;
+    const SAD_MIN_CORNER_SCORE = 0.02;
+
+    function addEmotionEvent(text) {
+      emotionEvents.push(text);
+      if (emotionEvents.length > 4) emotionEvents.shift();
+      emotionLog.replaceChildren(...emotionEvents.map((entry) => {
+        const row = document.createElement("div");
+        row.className = "event";
+        row.textContent = entry;
+        return row;
+      }));
+    }
+
+    // Compare each scheduled emotion sample with the previous one.
+    function checkForSignalChange(current) {
+      if (!previousSignalSnapshot) {
+        previousSignalSnapshot = current;
+        return;
+      }
+
+      const previous = previousSignalSnapshot;
+      previousSignalSnapshot = current;
+      const changes = [];
+      if (current.emotion !== previous.emotion) {
+        changes.push(`Emotion changed from ${previous.emotion} to ${current.emotion}.`);
+      }
+      if (!changes.length) return;
+
+      const proactivePrompt = `AUTOMATIC CHECK-IN: ${changes.join(" ")} The recent conversation is included above. Write a short, warm agent message that notices this shift out loud and asks a thoughtful, open question about it. This is a proactive check-in, not a message typed by the user.`;
+      const checkIn = { prompt: proactivePrompt, emotion: current.emotion };
+      sendProactiveCheckIn(checkIn);
+    }
+
+    // Personalize the opening chat prompt once, using the first sampled emotion.
+    function openingPromptFor(emotion) {
+      const prompts = {
+        Surprised: "You seem surprised. What happened?",
+        Amused: "You seem amused. What is making you smile?",
+        Angry: "You seem angry. What is on your mind?",
+        Sad: "You seem sad. Would you like to talk about it?",
+        Neutral: "How are you feeling today?",
+        Frustrated: "You seem frustrated. What is on your mind?",
+        Confused: "You seem unsure. What feels unclear?"
+      };
+      return prompts[emotion] || "What is on your mind today?";
+    }
+
+    function guessEmotion(categories) {
+      const scores = Object.fromEntries(categories.map(({ categoryName, score }) => [categoryName, score]));
+      const leftFrown = scores.mouthFrownLeft || 0;
+      const rightFrown = scores.mouthFrownRight || 0;
+      const leftPress = scores.mouthPressLeft || 0;
+      const rightPress = scores.mouthPressRight || 0;
+      const downturnedMouth = leftFrown >= SAD_MIN_CORNER_SCORE && rightFrown >= SAD_MIN_CORNER_SCORE &&
+        leftFrown + rightFrown >= SAD_MOUTH_SUM_THRESHOLD;
+      const pressedLips = leftPress >= SAD_MIN_CORNER_SCORE && rightPress >= SAD_MIN_CORNER_SCORE &&
+        leftPress + rightPress >= SAD_MOUTH_SUM_THRESHOLD;
+      if (downturnedMouth || pressedLips) return "Sad";
+
+      const emotionScores = {};
+      for (const [emotion, blendshapes] of Object.entries(EMOTION_BLENDSHAPES)) {
+        const total = blendshapes.reduce((sum, shape) => {
+          if (Array.isArray(shape)) {
+            const available = shape.find((name) => Object.hasOwn(scores, name));
+            return sum + (available ? scores[available] : 0);
+          }
+          if (typeof shape === "object") {
+            if (shape.maxPairSum) return sum + Math.max(...shape.maxPairSum.map((pair) => pair.reduce((s, name) => s + (scores[name] || 0), 0)));
+            return sum + Math.max(...shape.maxOf.map((name) => scores[name] || 0));
+          }
+          return sum + (scores[shape] || 0);
+        }, 0);
+        emotionScores[emotion] = total / Math.sqrt(blendshapes.length);
+      }
+      const qualifying = Object.entries(emotionScores).filter(([emotion, score]) => score >= (EMOTION_THRESHOLDS[emotion] ?? DETECTION_THRESHOLD));
+      const detected = qualifying.length ? qualifying.reduce((best, item) => item[1] > best[1] ? item : best)[0] : "Neutral";
+      return detected;
+    }
+
+    async function startFaceTracking() {
+      const files = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm");
+      const landmarker = await FaceLandmarker.createFromOptions(files, {
+        baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task" },
+        runningMode: "VIDEO", numFaces: 1, outputFaceBlendshapes: true
+      });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+      video.srcObject = stream;
+      await video.play();
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      function trackFrame() {
+        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          const now = performance.now();
+          const result = landmarker.detectForVideo(video, now);
+          const categories = result.faceBlendshapes?.[0]?.categories;
+          if (categories) {
+            const scores = Object.fromEntries(categories.map(({ categoryName, score }) => [categoryName, score]));
+            const blink = (scores.eyeBlinkLeft || 0) > BLINK_THRESHOLD || (scores.eyeBlinkRight || 0) > BLINK_THRESHOLD;
+            // Smooth frame-to-frame blendshape noise, and hold values during a blink.
+            if (!blink) {
+              for (const { categoryName, score } of categories) {
+                const previous = smoothedBlendshapes.get(categoryName);
+                smoothedBlendshapes.set(categoryName, previous === undefined
+                  ? score
+                  : previous + BLENDSHAPE_SMOOTHING * (score - previous));
+              }
+
+              if (now >= nextEmotionReadAt) {
+                const stableCategories = categories.map(({ categoryName }) => ({
+                  categoryName,
+                  score: smoothedBlendshapes.get(categoryName) || 0
+                }));
+                latestEmotion = guessEmotion(stableCategories);
+                if (!firstEmotionRecorded) {
+                  welcome.textContent = openingPromptFor(latestEmotion);
+                  firstEmotionRecorded = true;
+                }
+                nextEmotionReadAt = now + EMOTION_READ_INTERVAL;
+                checkForSignalChange({ emotion: latestEmotion });
+              }
+            }
+          }
+          if (latestEmotion !== lastLoggedEmotion) addEmotionEvent(`emotion: ${latestEmotion.toLowerCase()}`);
+          lastLoggedEmotion = latestEmotion;
+
+          drawing.clearRect(0, 0, canvas.width, canvas.height);
+          drawing.fillStyle = "#00ff88";
+          for (const face of result.faceLandmarks || []) for (const point of face) {
+            drawing.beginPath(); drawing.arc(point.x * canvas.width, point.y * canvas.height, 1.7, 0, Math.PI * 2); drawing.fill();
+          }
+        }
+        requestAnimationFrame(trackFrame);
+      }
+      trackFrame();
+    }
+
+    // The Cloudflare Pages Function adds the private Gemini key; camera frames stay local.
+    async function sendToGemini(text, emotionAtSend, isProactive = false, responseBubble = null) {
+      const signalContext = isProactive
+        ? `\n\nEmotion snapshot for this automatic check-in (may be imperfect): ${emotionAtSend}.`
+        : `\n\nEmotion detected when the user sent this message (may be imperfect): ${emotionAtSend}. Treat it as an estimate, not a certainty.`;
+      const memoryContext = conversationSummary
+        ? `\n\nCompact conversation memory (for continuity): ${conversationSummary}`
+        : "\n\nCompact conversation memory: no earlier topic summary yet.";
+      const userTurn = text + signalContext + memoryContext;
+      const contents = [
+        ...chatHistory.slice(-MAX_RECENT_HISTORY_MESSAGES),
+        { role: "user", parts: [{ text: userTurn }] }
+      ];
+      if (!responseBubble) responseBubble = addMessage("Thinking…", "status");
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45_000);
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: "You are Tell-Tale, a conversational agent that reads the user’s facial emotion. Adjust your tone and response based on the emotion given to you with detection from Media Pipe. You will sometimes be told the user’s emotion changed mid-conversation, with no new message from them. When this happens, proactively ask about the shift, referencing the conversation so far, instead of waiting for them to bring it up. Maintain continuity using the compact conversation memory and recent turns. Return exactly <reply>your short, natural response</reply><memory>a concise rolling summary of the user's topic and useful context, no more than 80 words</memory>. Keep the summary up to date so older turns can be omitted from later requests. Do not show the tags or memory text in the user-facing reply." }] },
+            contents,
+            generationConfig: { thinkingConfig: { thinkingLevel: "low" }, maxOutputTokens: 320 }
+          })
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.error?.message || `Gemini request failed (${response.status}).`);
+        }
+        if (!response.body) throw new Error("Gemini did not return a response stream.");
+
+        let streamBuffer = "";
+        let rawOutput = "";
+        const decoder = new TextDecoder();
+
+        function showReplyAsItArrives() {
+          const openingTag = "<reply>";
+          const closingTag = "</reply>";
+          const start = rawOutput.indexOf(openingTag);
+          if (start < 0) return;
+          const replyStart = start + openingTag.length;
+          const end = rawOutput.indexOf(closingTag, replyStart);
+          let partial = end >= 0 ? rawOutput.slice(replyStart, end) : rawOutput.slice(replyStart);
+          if (end < 0) {
+            for (let length = Math.min(closingTag.length - 1, partial.length); length > 0; length -= 1) {
+              if (closingTag.startsWith(partial.slice(-length))) {
+                partial = partial.slice(0, -length);
+                break;
+              }
+            }
+          }
+          if (partial.trim()) {
+            responseBubble.className = "message assistant";
+            responseBubble.textContent = partial.trimStart();
+            conversation.scrollTop = conversation.scrollHeight;
+          }
+        }
+
+        function processSseEvent(eventText) {
+          const dataText = eventText.split(/\r?\n/)
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trimStart())
+            .join("\n");
+          if (!dataText || dataText === "[DONE]") return;
+          const chunk = JSON.parse(dataText);
+          if (chunk.error) throw new Error(chunk.error.message || "Gemini stream failed.");
+          const text = chunk.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "";
+          if (!text) return;
+          rawOutput += text;
+          showReplyAsItArrives();
+        }
+
+        const reader = response.body.getReader();
+        while (true) {
+          const { value, done } = await reader.read();
+          if (value) streamBuffer += decoder.decode(value, { stream: true });
+          if (done) streamBuffer += decoder.decode();
+          const events = streamBuffer.split(/\r?\n\r?\n/);
+          streamBuffer = events.pop() || "";
+          for (const eventText of events) processSseEvent(eventText);
+          if (done) {
+            if (streamBuffer.trim()) processSseEvent(streamBuffer);
+            break;
+          }
+        }
+
+        const answerMatch = rawOutput.match(/<reply>([\s\S]*?)<\/reply>/i);
+        const answer = (answerMatch?.[1] || rawOutput.replace(/<\/?(?:reply|memory)>/gi, "")).trim();
+        if (!answer) throw new Error("Gemini returned an empty response. Please try again.");
+        const memoryMatch = rawOutput.match(/<memory>([\s\S]*?)<\/memory>/i);
+        if (memoryMatch?.[1]?.trim()) conversationSummary = memoryMatch[1].trim().slice(0, 1200);
+        responseBubble.className = "message assistant";
+        responseBubble.textContent = answer;
+        chatHistory.push({ role: "user", parts: [{ text: userTurn }] }, { role: "model", parts: [{ text: answer }] });
+        if (chatHistory.length > MAX_RECENT_HISTORY_MESSAGES) {
+          chatHistory.splice(0, chatHistory.length - MAX_RECENT_HISTORY_MESSAGES);
+        }
+      } catch (error) {
+        if (error.name === "AbortError") throw new Error("Gemini did not reply within 45 seconds. Check your connection and try again.");
+        throw error;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    // Run user and proactive requests in order, so automatic check-ins never interrupt a reply.
+    function enqueueGeminiRequest(text, emotionAtSend, isProactive = false, responseBubble = null) {
+      const request = geminiRequestQueue.then(() => sendToGemini(text, emotionAtSend, isProactive, responseBubble));
+      geminiRequestQueue = request.catch(() => {});
+      return request;
+    }
+
+    function sendProactiveCheckIn(checkIn) {
+      const status = addMessage("Thinking…", "status");
+      enqueueGeminiRequest(checkIn.prompt, checkIn.emotion, true, status).catch((error) => {
+        status.className = "message assistant";
+        status.textContent = `Could not send an automatic check-in: ${error.message}`;
+      });
+    }
+
+    function addMessage(text, role) {
+      // Keep the first emotion-based prompt in the conversation as its opening line.
+      const bubble = document.createElement("div");
+      bubble.className = `message ${role}`;
+      bubble.textContent = text;
+      conversation.append(bubble);
+      conversation.scrollTop = conversation.scrollHeight;
+      return bubble;
+    }
+
+    async function submitMessage(text, emotionAtSend) {
+      if (!text.trim()) return;
+      addMessage(text.trim(), "user");
+      const status = addMessage("Thinking…", "status");
+      sendButton.disabled = true;
+      messageInput.disabled = true;
+      try {
+        await enqueueGeminiRequest(text.trim(), emotionAtSend, false, status);
+      } catch (error) {
+        const errorBubble = document.createElement("div");
+        errorBubble.className = "message assistant";
+        errorBubble.textContent = `Could not reach Gemini: ${error.message}`;
+        conversation.append(errorBubble);
+      } finally {
+        if (status.className === "message status") status.remove();
+        sendButton.disabled = false;
+        messageInput.disabled = false;
+        messageInput.focus();
+        conversation.scrollTop = conversation.scrollHeight;
+      }
+    }
+
+    chatForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = messageInput.value.trim();
+      if (!text || sendButton.disabled) return;
+      // Freeze the detected emotion at the instant the user sends this message.
+      const emotionAtSend = latestEmotion;
+      messageInput.value = "";
+      submitMessage(text, emotionAtSend);
+    });
+    messageInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); chatForm.requestSubmit(); }
+    });
+
+    // Camera permission and model-loading errors appear in the browser console.
+    startFaceTracking().catch((error) => console.error("Face tracking could not start:", error));
+  </script>
+</body>
+</html>
