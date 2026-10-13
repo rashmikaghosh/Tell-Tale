@@ -126,7 +126,7 @@
     };
     const DETECTION_THRESHOLD = 0.75;
     const EMOTION_THRESHOLDS = { Angry: 0.75, Frustrated: 0.25, Confused: 0.35 };
-    // Sad uses downturned mouth corners or pressed lips; this direct cutoff prioritizes that signal.
+    // Sad is based on downturned mouth corners only.
     const SAD_MOUTH_SUM_THRESHOLD = 0.10;
     const SAD_MIN_CORNER_SCORE = 0.02;
 
@@ -179,13 +179,9 @@
       const scores = Object.fromEntries(categories.map(({ categoryName, score }) => [categoryName, score]));
       const leftFrown = scores.mouthFrownLeft || 0;
       const rightFrown = scores.mouthFrownRight || 0;
-      const leftPress = scores.mouthPressLeft || 0;
-      const rightPress = scores.mouthPressRight || 0;
       const downturnedMouth = leftFrown >= SAD_MIN_CORNER_SCORE && rightFrown >= SAD_MIN_CORNER_SCORE &&
         leftFrown + rightFrown >= SAD_MOUTH_SUM_THRESHOLD;
-      const pressedLips = leftPress >= SAD_MIN_CORNER_SCORE && rightPress >= SAD_MIN_CORNER_SCORE &&
-        leftPress + rightPress >= SAD_MOUTH_SUM_THRESHOLD;
-      if (downturnedMouth || pressedLips) return "Sad";
+      if (downturnedMouth) return "Sad";
 
       const emotionScores = {};
       for (const [emotion, blendshapes] of Object.entries(EMOTION_BLENDSHAPES)) {
